@@ -1,0 +1,77 @@
+// Parameters: Replace these with your actual values
+def config = [
+    baseUrl: "https://yourinstance.atlassian.net",  // Jira Cloud instance URL
+    apiToken: "your-API-token", // API token
+    email: "youremail@domain.co" // Jira admin email
+]
+
+import groovy.json.JsonSlurper
+
+def thresholdDate = Date.parse("yyyy-MM-dd", "2024-01-01")  // Beginning of this year
+
+// Helper function to make authenticated REST API calls
+def callJiraApi(String method, String endpoint, Map params = [:], String body = null, Map config) {
+    def url = "${config.baseUrl}$endpoint"
+    if (params) {
+        url += "?" + params.collect { k, v -> "$k=$v" }.join("&")
+    }
+
+    def connection = new URL(url).openConnection()
+    connection.setRequestMethod(method)
+    connection.setRequestProperty("Authorization", "Basic " + "${config.email}:${config.apiToken}".bytes.encodeBase64().toString())
+    connection.setRequestProperty("Accept", "application/json")
+    connection.setRequestProperty("Content-Type", "application/json")
+
+    if (body) {
+        connection.doOutput = true
+        connection.outputStream.withWriter("UTF-8") { it.write(body) }
+    }
+
+    def responseCode = connection.responseCode
+    def response = responseCode < 400 ? connection.inputStream.text : connection.errorStream.text
+    if (responseCode >= 400) {
+        throw new RuntimeException("Error calling Jira API: $responseCode - $response")
+    }
+    return new JsonSlurper().parseText(response)
+}
+
+// Fetch all custom fields
+def customFields = callJiraApi("GET", "/rest/api/3/field", [:], null, config)
+def fieldsToDelete = []
+
+for (field in customFields) {
+    def fieldId = field.id
+    def fieldName = field.name
+    def fieldCreatedDate = field?.schema?.customFieldCreated  // Fetch the creation date
+    def isCustomField = field.schema?.type == "custom"  // Ensure it is a custom field
+
+    println "Processing field: '${fieldName}' (ID: ${fieldId})"
+
+    if (fieldCreatedDate) {
+        def createdDate = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", fieldCreatedDate)
+        println "Field '${fieldName}' was created on ${createdDate.format('yyyy-MM-dd')}"
+
+        if (createdDate < thresholdDate && isCustomField) {
+            // Check if the custom field is empty
+            def jql = "\"${fieldName}\" IS NOT EMPTY"
+            def searchResult = callJiraApi("GET", "/rest/api/3/search", [jql: jql, maxResults: 1], null, config)
+
+            if (searchResult.total == 0) {
+                fieldsToDelete << [id: fieldId, name: fieldName]
+                println "Field '${fieldName}' (ID: ${fieldId}) is EMPTY and eligible for deletion."
+            } else {
+                println "Field '${fieldName}' (ID: ${fieldId}) is NOT EMPTY."
+            }
+        } else {
+            println "Field '${fieldName}' does not meet the criteria (created before ${thresholdDate.format('yyyy-MM-dd')} and empty)."
+        }
+    } else {
+        println "Field '${fieldName}' does not have a creation date."
+    }
+}
+
+// Summary of results
+println "Eligible fields for deletion: ${fieldsToDelete.size()}"
+fieldsToDelete.each { field ->
+    println "Eligible field: '${field.name}' (ID: ${field.id})"
+}
