@@ -1,0 +1,32 @@
+// Fetch all workflow schemes
+def getAllWorkflowSchemes = get("/rest/api/2/workflowscheme")
+    .header('Content-Type', 'application/json')
+    .asObject(Map)
+
+if (getAllWorkflowSchemes.status == 200) {
+    def workflowSchemes = getAllWorkflowSchemes.body.values
+
+    // Loop through each workflow scheme
+    workflowSchemes.each { scheme ->
+        def schemeId = scheme.id
+        def issueTypeMappings = scheme.issueTypeMappings
+
+        // Check if the scheme is unreferenced
+        if (!issueTypeMappings || issueTypeMappings.isEmpty()) {
+            // Delete the unreferenced workflow scheme
+            def deleteResponse = delete("/rest/api/2/workflowscheme/${schemeId}")
+                .header('Content-Type', 'application/json')
+                .asString()
+
+            if (deleteResponse.status == 204) {
+                logger.info("Deleted workflow scheme with ID: ${schemeId}")
+            } else {
+                logger.warn("Failed to delete workflow scheme with ID: ${schemeId}. Status: ${deleteResponse.status}")
+            }
+        } else {
+            logger.info("Workflow scheme with ID: ${schemeId} is in use.")
+        }
+    }
+} else {
+    logger.error("Failed to fetch workflow schemes. Status: ${getAllWorkflowSchemes.status}")
+}
