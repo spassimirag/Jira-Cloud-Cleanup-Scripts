@@ -1,0 +1,67 @@
+import java.net.URLEncoder
+// Configuration
+def maxResults = 50
+def startAt = 0
+def total = 1 // Initialized to a non-zero value to enter the loop
+
+println "Starting workflow deletion process..."
+
+// Pagination loop to fetch all workflows
+while (startAt < total) {
+    println "Fetching workflows starting at index ${startAt}..."
+
+    // Fetch workflows with pagination
+    def searchResult = get('/rest/api/3/workflow/search')
+        .queryString("maxResults", "${maxResults}")
+        .queryString("startAt", "${startAt}")
+        .asObject(Map)
+        .body
+
+    // Extract workflows and total count
+    def workflows = searchResult?.values ?: []
+    total = searchResult?.total ?: 0
+
+    println "Retrieved ${workflows.size()} workflows out of ${total} total."
+
+    // Iterate over workflows and attempt deletion
+    workflows.each { workflow ->
+        def workflowId = workflow?.id?.entityId
+        def workflowName = workflow?.name
+
+        if (workflowId) {
+            try {
+                // Encode the workflow ID for safe URL usage
+                def encodedWorkflowId = URLEncoder.encode(workflowId, "UTF-8")
+
+                println "\n Attempting to delete: ${workflowName} (ID: ${workflowId})"
+
+                // Perform the DELETE request
+                def response = delete("/rest/api/3/workflow/${encodedWorkflowId}").asString()
+
+                // Handle response
+                if (response.status == 204) {
+                    println "✅ Successfully deleted: ${workflowName}"
+                } else if (response.status == 403) {
+                    println "❌ Permission denied to delete ${workflowName}: ${response.body}"
+                } else if (response.status == 400) {
+                    println "⚠️ Bad request while deleting ${workflowName}: ${response.body}"
+                } else {
+                    println "❌ Failed to delete ${workflowName}: ${response.status} - ${response.body}"
+                }
+
+            } catch (Exception e) {
+                println "Error deleting workflow '${workflowName}': ${e.message}"
+            }
+
+        } else {
+            println "Skipping workflow with no valid ID: ${workflowName}"
+        }
+    }
+
+    // Update startAt for the next page of results
+    startAt += maxResults
+}
+
+println "\n Workflow deletion process completed."
+
+
